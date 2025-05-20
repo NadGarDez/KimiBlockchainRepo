@@ -1,0 +1,242 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+
+contract GamePass {
+    address public owner;
+    uint public gameIdCounter;
+    mapping(uint => Game) public games;
+    mapping(uint => Ticket) public tickets;
+    uint public ticketIdCounter;
+    uint public platformFeePercentage = 5; // Porcentaje de la tarifa de la plataforma (ej: 5%)
+    uint public accumulatedFees; // Tarifa acumulada en el contrato
+
+    enum GameStatus {
+        Sale,
+        Progress,
+        Finished
+    }
+
+    struct Game {
+        address creator;
+        uint minPlayers;
+        uint maxPlayers;
+        uint entryFee;
+        uint pool;
+        GameStatus status;
+        uint playerCount;
+        address[] winners;
+        bytes32 resultHash;
+        mapping(address => bool) prizePaid; // Para rastrear si el premio ya se pagó a un ganador
+        uint collectedFee; // Tarifa recolectada para este juego
+    }
+
+    struct Ticket {
+        uint gameId;
+        address owner;
+        uint ticketId;
+    }
+
+    event GameCreated(uint gameId, address creator, uint minPlayers, uint maxPlayers, uint entryFee);
+    event TicketPurchased(uint gameId, address player, uint ticketId, uint amount);
+    event GameStatusUpdated(uint gameId, GameStatus newStatus);
+    event WinnersAnnounced(uint gameId, address[] winners, bytes32 resultHash);
+    event PrizeDistributed(uint gameId, address winner, uint amount);
+    event PlatformFeeCollected(uint gameId, uint amount);
+    event AllPrizesDistributed(uint gameId);
+    event OwnerFeeWithdrawn(uint amount);
+
+    constructor(uint _platformFeePercentage) {
+        owner = msg.sender;
+        gameIdCounter = 1;
+        ticketIdCounter = 1;
+        require(_platformFeePercentage <= 100, "Platform fee percentage cannot exceed 100.");
+        platformFeePercentage = _platformFeePercentage;
+        accumulatedFees = 0;
+    }
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Only the owner can call this function.");
+        _;
+    }
+
+    modifier inStatus(uint _gameId, GameStatus _status) {
+        require(games[_gameId].status == _status, "Game is not in the required status.");
+        _;
+    }
+
+    function createGame(uint _minPlayers, uint _maxPlayers, uint _entryFee) public onlyOwner {
+        require(_minPlayers > 0, "Minimum players must be greater than 0.");
+        require(_maxPlayers >= _minPlayers, "Maximum players must be greater than or equal to minimum players.");
+        require(_entryFee > 0, "Entry fee must be greater than 0.");
+
+        uint newGameId = gameIdCounter;
+        games[newGameId].creator = msg.sender;
+        games[newGameId].minPlayers= _minPlayers;
+        games[newGameId].maxPlayers= _maxPlayers;
+        games[newGameId].entryFee= _entryFee;
+        games[newGameId].pool= 0;
+        games[newGameId].status = GameStatus.Sale;
+        games[newGameId].playerCount = 0;
+        games[newGameId].winners = new address[](0);
+        games[newGameId].resultHash =bytes32(0);
+        games[newGameId].collectedFee= 0;
+
+/*
+        = Game({
+            creator: msg.sender,
+            status: GameStatus.Sale,
+            playerCount: 0,
+            winners: new address[](0),
+            resultHash: bytes32(0),
+            //prizePaid: mapping(address => bool),
+            collectedFee: 0
+        }); */
+        gameIdCounter++;
+
+        emit GameCreated(newGameId, msg.sender, _minPlayers, _maxPlayers, _entryFee);
+        emit GameStatusUpdated(newGameId, GameStatus.Sale);
+    }
+
+    function buyTicket(uint _gameId) public payable inStatus(_gameId, GameStatus.Sale) {
+        require(games[_gameId].playerCount < games[_gameId].maxPlayers, "Game is full.");
+        require(msg.value == games[_gameId].entryFee, "Incorrect entry fee.");
+
+        uint newTicketId = ticketIdCounter;
+        tickets[newTicketId] = Ticket({
+            gameId: _gameId,
+            owner: msg.sender,
+            ticketId: newTicketId
+        });
+
+        games[_gameId].pool += msg.value;
+        games[_gameId].playerCount++;
+        ticketIdCounter++;
+
+        emit TicketPurchased(_gameId, msg.sender, newTicketId, msg.value);
+    }
+
+    function updateGameStatus(uint _gameId, GameStatus _newStatus) public onlyOwner {
+        require(games[_gameId].creator!= address(0), "Game does not exist.");
+        require(games[_gameId].status != _newStatus, "Game is already in this status.");
+        games[_gameId].status = _newStatus;
+        emit GameStatusUpdated(_gameId, _newStatus);
+    }
+
+    function announceWinners(uint _gameId, address[] memory _winners, bytes memory _signature) public onlyOwner inStatus(_gameId, GameStatus.Progress) {
+        require(_winners.length > 0 && _winners.length <= 3, "Number of winners must be between 1 and 3.");
+
+        bytes32 messageHash = keccak256(abi.encode(_gameId, _winners));
+        address signer = ECDSA.recover(messageHash, _signature);
+        require(signer == owner, "Invalid signature from the backend.");
+
+        games[_gameId].status = GameStatus.Finished;
+        games[_gameId].winners = _winners;
+        games[_gameId].resultHash = messageHash;
+
+        emit GameStatusUpdated(_gameId, GameStatus.Finished);
+        emit WinnersAnnounced(_gameId, _winners, messageHash);
+    }
+
+    function distributeAllPrizes(uint _gameId, bytes[] memory _signatures) public onlyOwner inStatus(_gameId, GameStatus.Finished) {
+        require(games[_gameId].winners.length == _signatures.length, "Number of signatures must match the number of winners.");
+        require(games[_gameId].winners.length > 0, "No winners to distribute prizes to.");
+
+        uint platformFeeForGame = (games[_gameId].pool * platformFeePercentage) / 100;
+        games[_gameId].collectedFee = platformFeeForGame;
+        accumulatedFees += platformFeeForGame;
+        emit PlatformFeeCollected(_gameId, platformFeeForGame);
+
+        uint remainingPool = games[_gameId].pool - platformFeeForGame;
+        uint totalWinners = games[_gameId].winners.length;
+
+        for (uint i = 0; i < totalWinners; i++) {
+            address winner = games[_gameId].winners[i];
+            bytes memory signature = _signatures[i];
+            require(!games[_gameId].prizePaid[winner], "Prize already distributed to a winner.");
+
+            uint prizeAmount = 0;
+            if (totalWinners == 1) {
+                prizeAmount = remainingPool;
+            } else {
+                if (i < totalWinners - 1) {
+                    prizeAmount = remainingPool / 3 * 2;
+                    remainingPool -= prizeAmount;
+                } else {
+                    prizeAmount = remainingPool;
+                }
+            }
+
+            bytes32 messageHash = keccak256(abi.encode(_gameId, winner, prizeAmount));
+            address signer = ECDSA.recover(messageHash, signature);
+            require(signer == owner, "Invalid signature for prize distribution.");
+
+            payable(winner).transfer(prizeAmount);
+            games[_gameId].pool -= prizeAmount;
+            games[_gameId].prizePaid[winner] = true;
+            emit PrizeDistributed(_gameId, winner, prizeAmount);
+        }
+
+        emit AllPrizesDistributed(_gameId);
+    }
+
+    function withdrawPlatformFees( bytes memory _signature) public onlyOwner {
+        bytes32 messageHash = keccak256(abi.encode(accumulatedFees));
+        address signer = ECDSA.recover(messageHash, _signature);
+        require(signer == owner, "Invalid signature for fee withdrawal.");
+
+        uint amountToWithdraw = accumulatedFees;
+        accumulatedFees = 0;
+        payable(owner).transfer(amountToWithdraw);
+        emit OwnerFeeWithdrawn(amountToWithdraw);
+    }
+
+    function getGameDetails(uint _gameId) public view returns (Game memory) {
+        require(games[_gameId].creator!= address(0), "Game does not exist.");
+        return games[_gameId];
+    }
+
+    function getTicketInfo(uint _ticketId) public view returns (Ticket memory) {
+        require(tickets[_ticketId].owner != address(0), "Ticket does not exist.");
+        return tickets[_ticketId];
+    }
+
+    function getPlayerCount(uint _gameId) public view onlyOwner returns (uint) {
+        require(games[_gameId].creator!= address(0), "Game does not exist.");
+        return games[_gameId].playerCount;
+    }
+
+    function getGamePool(uint _gameId) public view returns (uint) {
+        require(games[_gameId].creator!= address(0), "Game does not exist.");
+        return games[_gameId].pool;
+    }
+
+    function getWinners(uint _gameId) public view returns (address[] memory) {
+        require(games[_gameId].creator!= address(0) && games[_gameId].status == GameStatus.Finished, "Game not finished or does not exist.");
+        return games[_gameId].winners;
+    }
+
+    function getResultHash(uint _gameId) public view returns (bytes32) {
+        require(games[_gameId].creator!= address(0) && games[_gameId].status == GameStatus.Finished, "Game not finished or does not exist.");
+        return games[_gameId].resultHash;
+    }
+
+    function getGameStatus(uint _gameId) public view returns (GameStatus) {
+        require(games[_gameId].creator!= address(0), "Game does not exist.");
+        return games[_gameId].status;
+    }
+
+    function getPlatformFeePercentage() public view returns (uint) {
+        return platformFeePercentage;
+    }
+
+    function setPlatformFeePercentage(uint _newPercentage) public onlyOwner {
+        require(_newPercentage <= 100, "New percentage cannot exceed 100.");
+        platformFeePercentage = _newPercentage;
+    }
+
+    function getAccumulatedFees() public view onlyOwner returns (uint) {
+        return accumulatedFees;
+    }
+}
