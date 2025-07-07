@@ -186,8 +186,67 @@ contract GamePass {
     //emit AllPrizesDistributed(_gameId);
   }
 
+  function withdrawPlatformFees(bytes memory _signature) public onlyOwner {
+    bytes32 messageHash = keccak256(abi.encode(accumulatedFees));
+    address signer = ECDSA.recover(messageHash, _signature);
+    require(signer == owner, 'Invalid signature for fee withdrawal.');
+
+    uint amountToWithdraw = accumulatedFees;
+    accumulatedFees = 0;
+    payable(owner).transfer(amountToWithdraw);
+    //  emit OwnerFeeWithdrawn(amountToWithdraw);
+  }
+
+  function getGameDetails(uint _gameId) public view returns (Game memory) {
+    require(games[_gameId].creator != address(0), 'Game does not exist.');
+    return games[_gameId];
+  }
+
+  function getTicketInfo(uint _ticketId) public view returns (Ticket memory) {
+    require(tickets[_ticketId].owner != address(0), 'Ticket does not exist.');
+    return tickets[_ticketId];
+  }
+
+  function getPlayerCount(uint _gameId) public view onlyOwner returns (uint) {
+    require(games[_gameId].creator != address(0), 'Game does not exist.');
+    return games[_gameId].playerCount;
+  }
+
+  function getGamePool(uint _gameId) public view returns (uint) {
+    require(games[_gameId].creator != address(0), 'Game does not exist.');
+    return games[_gameId].pool;
+  }
+
+  function getWinner(uint _gameId) public view returns (address) {
+    require(
+      games[_gameId].creator != address(0) &&
+        games[_gameId].status == GameStatus.Finished,
+      'Game not finished or does not exist.'
+    );
+    return games[_gameId].winner;
+  }
+
+  function getResultHash(uint _gameId) public view returns (bytes32) {
+    require(
+      games[_gameId].creator != address(0) &&
+        games[_gameId].status == GameStatus.Finished,
+      'Game not finished or does not exist.'
+    );
+    return games[_gameId].resultHash;
+  }
+
+  function getGameStatus(uint _gameId) public view returns (GameStatus) {
+    require(games[_gameId].creator != address(0), 'Game does not exist.');
+    return games[_gameId].status;
+  }
+
   function getPlatformFeePercentage() public view returns (uint) {
     return platformFeePercentage;
+  }
+
+  function setPlatformFeePercentage(uint _newPercentage) public onlyOwner {
+    require(_newPercentage <= 100, 'New percentage cannot exceed 100.');
+    platformFeePercentage = _newPercentage;
   }
 
   function getAccumulatedFees() public view returns (uint) {
