@@ -7,7 +7,7 @@ RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 echo -e "${YELLOW}--- Intentando desplegar el contrato Ticket en la red 'local' ---${NC}"
-echo -e "${YELLOW}Asegúrate de que tu nodo Hardhat (o Anvil/Ganache) ya esté corriendo en http://192.168.1.103:8545 ${NC}"
+echo -e "${YELLOW}Asegúrate de que tu nodo Hardhat (o Anvil/Ganache) ya esté corriendo en http://192.168.1.102:8545 ${NC}"
 
 # Ejecuta el comando de despliegue
 # Captura el código de salida del comando de despliegue
