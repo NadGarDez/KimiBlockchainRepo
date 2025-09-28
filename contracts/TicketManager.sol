@@ -16,8 +16,8 @@ enum TicketType {
 
 struct Variant {
   TicketType ticketType;
+  uint256 ticketPrice;
   string ticketName;
-  uint ticketPrice;
   string ticketColor;
 }
 
@@ -37,33 +37,34 @@ contract TicketManager {
 // 3. VARIABLES DE ESTADO (Globales y Mapeos)
 // =================================================================
 
-address payable public contractOwner;
-address public trustedPoolContract; // Dirección del HashPool
+address public contractOwner;
+address public poolFactoryAddress; 
+mapping(address => bool) public authorizedPools; 
 uint256 public platformFeeBasisPoints;
-uint nextId = 1;
+uint256 nextId = 1;
 
 // Mapeos
-mapping(uint => Ticket) tickets;
+mapping(uint256 => Ticket) tickets;
 mapping(address => uint256[]) ticketOwners;
 mapping(TicketType => Variant) variants;
 mapping(string => TicketType) public stringToTicketType;
-mapping(string => bool) public isNameValid;
 
 
 // =================================================================
 // 4. EVENTOS
 // =================================================================
 
-event FeeAdded(uint amount);
-event PurchasedTicket(address owner, uint value, uint ticketId);
-event TicketConsumed(uint ticketId, address user, address consumingContract);
+event FeeAdded(uint256 amount);
+event PurchasedTicket(address owner, uint256 value, uint256 ticketId);
+event TicketConsumed(uint256 ticketId, address user, address consumingContract);
 event TicketStatusReverted(
-  uint ticketId,
+  uint256 ticketId,
   address user,
   address consumingContract
 ); 
-event PrizeAwarded(address indexed winner, uint netPrize, uint feeAmount);
-event TrustedPoolSet(address oldAddress, address newAddress); 
+event PrizeAwarded(address indexed winner, uint256 netPrize, uint256 feeAmount);
+event PoolFactorySet(address oldAddress, address newAddress);
+event PoolAuthorized(address indexed poolAddress, address indexed factory);
 
 
 // =================================================================
@@ -75,12 +76,14 @@ modifier onlyOwner() {
   _;
 }
 
-modifier onlyTrustedPool() {
-  require(
-    msg.sender == trustedPoolContract,
-    'Solo el contrato de Pool de confianza es autorizado.'
-  );
-  _;
+modifier onlyPoolFactory() {
+    require(msg.sender == poolFactoryAddress, 'Solo la Factoria de Pools autorizada.');
+    _;
+}
+
+modifier onlyAuthorizedPool() {
+    require(authorizedPools[msg.sender], 'Solo un HashPool autorizado puede llamar.');
+    _;
 }
 
 
@@ -90,11 +93,11 @@ modifier onlyTrustedPool() {
 
 constructor(
   string[] memory _ticketNames,
-  uint[] memory _ticketPrices,
+  uint256[] memory _ticketPrices,
   string[] memory _ticketColorsForVariants,
   uint256 _feePercentage
 ) {
-  uint numTicketTypes = uint(TicketType.Professional) + 1;
+  uint256 numTicketTypes = uint256(TicketType.Professional) + 1;
 
   require(
     _ticketNames.length == numTicketTypes &&
@@ -103,19 +106,18 @@ constructor(
     'Error: informacion incompleta para tipos de tickets o colores.'
   );
 
-  for (uint i = 0; i < numTicketTypes; i++) {
+  for (uint256 i = 0; i < numTicketTypes; i++) {
     TicketType currentType = TicketType(i);
     stringToTicketType[_ticketNames[i]] = currentType;
-    isNameValid[_ticketNames[i]] = true;
     variants[currentType] = Variant(
       currentType,
-      _ticketNames[i],
       _ticketPrices[i],
+      _ticketNames[i],
       _ticketColorsForVariants[i]
     );
   }
 
-  contractOwner = payable(msg.sender);
+  contractOwner = payable(msg.sender); 
   platformFeeBasisPoints = _feePercentage;
 }
 
@@ -124,13 +126,31 @@ constructor(
 // 7. FUNCIONES MUTABLES (SETTERS, Transacciones, Lógica)
 // =================================================================
 
-function setTrustedPoolContract(address _newTrustedPoolAddress) public onlyOwner {
-  require(_newTrustedPoolAddress != address(0), 'Direccion invalida.');
+/**
+ * @notice Establece la dirección del contrato Pool Factory. Solo puede ser llamada una vez.
+ * Resuelve la dependencia circular en el deploy.
+ */
+function setPoolFactoryAddress(address _factoryAddress) public onlyOwner {
+  require(poolFactoryAddress == address(0), "La Factoria ya esta establecida.");
+  require(_factoryAddress != address(0), "Direccion invalida.");
   
-  address oldAddress = trustedPoolContract;
-  trustedPoolContract = _newTrustedPoolAddress;
+  address oldAddress = poolFactoryAddress;
+  poolFactoryAddress = _factoryAddress;
   
-  emit TrustedPoolSet(oldAddress, _newTrustedPoolAddress);
+  emit PoolFactorySet(oldAddress, _factoryAddress);
+}
+
+/**
+ * @notice Autoriza un nuevo HashPool para interactuar con este Manager. 
+ * Solo la Pool Factory puede llamar a esta función.
+ */
+function authorizePool(address _poolAddress) public onlyPoolFactory {
+    require(_poolAddress != address(0), "Direccion del Pool invalida.");
+    require(!authorizedPools[_poolAddress], "El Pool ya esta autorizado.");
+    
+    authorizedPools[_poolAddress] = true;
+    
+    emit PoolAuthorized(_poolAddress, msg.sender);
 }
 
 function depositEmergencyFunds() public payable onlyOwner {
@@ -143,14 +163,14 @@ function setPlatformFee(uint256 newFee) public onlyOwner {
 }
 
 function buy(string memory ticketName) public payable {
+  
+  TicketType currentType = stringToTicketType[ticketName];
+  Variant memory requestedVariant = variants[currentType];
+
   require(
-    isNameValid[ticketName],
+    requestedVariant.ticketPrice > 0, 
     'Error: La variante de ticket proporcionada no existe en este contrato.'
   );
-
-  TicketType currentType = stringToTicketType[ticketName];
-
-  Variant memory requestedVariant = variants[currentType];
 
   require(
     msg.value == requestedVariant.ticketPrice,
@@ -172,7 +192,7 @@ function buy(string memory ticketName) public payable {
 function awardPrize(
   address payable _winner,
   uint256 _totalPrizeAmount
-) public onlyTrustedPool {
+) public onlyAuthorizedPool { 
   require(_winner != address(0), 'Direccion del ganador invalida.');
   require(
     address(this).balance >= _totalPrizeAmount,
@@ -183,7 +203,7 @@ function awardPrize(
 
   uint256 netPrize = _totalPrizeAmount - feeAmount;
 
-  (bool feeSuccess, ) = contractOwner.call{value: feeAmount}('');
+  (bool feeSuccess, ) = payable(contractOwner).call{value: feeAmount}('');
   require(feeSuccess, 'Error al enviar la comision (fee) al owner.');
 
   (bool prizeSuccess, ) = _winner.call{value: netPrize}('');
@@ -192,7 +212,7 @@ function awardPrize(
   emit PrizeAwarded(_winner, netPrize, feeAmount);
 }
 
-function markTicketAsUsed(uint256 _ticketId) public onlyTrustedPool {
+function markTicketAsUsed(uint256 _ticketId) public onlyAuthorizedPool { 
   require(tickets[_ticketId].owner != address(0), 'Error: Ticket no existe.');
   require(
     !tickets[_ticketId].isUsed,
@@ -204,7 +224,7 @@ function markTicketAsUsed(uint256 _ticketId) public onlyTrustedPool {
   emit TicketConsumed(_ticketId, tickets[_ticketId].owner, msg.sender);
 }
 
-function unmarkTicketAsUsed(uint256 _ticketId) public onlyTrustedPool {
+function unmarkTicketAsUsed(uint256 _ticketId) public onlyAuthorizedPool { 
   require(tickets[_ticketId].owner != address(0), 'Error: Ticket no existe.');
   require(
     tickets[_ticketId].isUsed,
@@ -221,19 +241,15 @@ function unmarkTicketAsUsed(uint256 _ticketId) public onlyTrustedPool {
 // 8. FUNCIONES DE VISTA (View)
 // =================================================================
 
-function ticketAmoutPerAddress() public view returns (uint) {
-  return ticketOwners[msg.sender].length;
-}
-
-function ticketsPerAddress() public view returns (uint[] memory) {
+function ticketsPerAddress() public view returns (uint256[] memory) {
   return ticketOwners[msg.sender];
 }
 
 function getAllTicketVariants() public view returns (Variant[] memory) {
-  uint numTicketTypes = uint(TicketType.Professional) + 1;
+  uint256 numTicketTypes = uint256(TicketType.Professional) + 1;
   Variant[] memory allVariants = new Variant[](numTicketTypes);
 
-  for (uint i = 0; i < numTicketTypes; i++) {
+  for (uint256 i = 0; i < numTicketTypes; i++) {
     TicketType currentType = TicketType(i);
     allVariants[i] = variants[currentType];
   }
