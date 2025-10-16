@@ -101,7 +101,11 @@ contract HashPool {
   event TicketRefunded(address indexed participant, uint256 ticketId);
   event PreRegistrationEvent(address indexed participant, uint256 ticketId);
   event SuccessfulRegistration(address indexed participant, uint256 ticketId);
-  event FailedRegistration(address indexed participant, uint256 ticketId, string reason);
+  event FailedRegistration(
+    address indexed participant,
+    uint256 ticketId,
+    string reason
+  );
 
   // =================================================================
   // 5. MODIFICADORES
@@ -156,7 +160,7 @@ contract HashPool {
 
     emit PreRegistrationEvent(msg.sender, ticketId);
 
-    if(preRegistrationCounter == maxContestants) {
+    if (preRegistrationCounter == maxContestants) {
       setPoolStatus(PoolState.ValidatingEntries);
     }
   }
@@ -168,8 +172,7 @@ contract HashPool {
   function registerBatch(
     address[] calldata _participants,
     uint256[] calldata _ticketIds,
-    bytes32[] calldata _contestantSigns,
-    bytes32  allHashesCombined
+    bytes32[] calldata _contestantSigns
   ) public onlyAdmin {
     require(poolStatus == PoolState.ValidatingEntries, 'Registro terminado');
     require(_participants.length > 0, 'Batch vacio.');
@@ -185,16 +188,24 @@ contract HashPool {
       'El batch excede el cupo maximo.'
     );
 
+    bytes32 currentCombinedHash = combinedHash;
+    uint16 currentCounter = contestantCounter;
+
     for (uint16 i = 0; i < batchSize; i++) {
-      contestants[contestantCounter] = _participants[i];
+      contestants[currentCounter] = _participants[i];
       participantTicket[_participants[i]] = _ticketIds[i];
       contestantSigns[_participants[i]] = _contestantSigns[i];
-      ticketManager.markTicketAsUsed(_ticketIds[i]);
+      // ticketManager.markTicketAsUsed(_ticketIds[i]);
+      currentCombinedHash = keccak256(
+        abi.encodePacked(currentCombinedHash, _contestantSigns[i])
+      );
+
       emit SuccessfulRegistration(_participants[i], _ticketIds[i]);
-      contestantCounter++;
+      currentCounter++;
     }
 
-    combinedHash = allHashesCombined;
+    combinedHash = currentCombinedHash;
+    contestantCounter = currentCounter;
 
     if (contestantCounter >= maxContestants) {
       setPoolStatus(PoolState.RegistrationClosed);
@@ -246,11 +257,17 @@ contract HashPool {
     setPoolStatus(PoolState.GameEnded);
   }
 
-  function failRegistration(address _participant, uint ticketId, string calldata reason) public onlyAdmin {
+  function failRegistration(
+    address _participant,
+    uint ticketId,
+    string calldata reason
+  ) public onlyAdmin {
     require(poolStatus == PoolState.ValidatingEntries, 'Registro terminado');
-    require(participantTicket[_participant] == 0, 'Participante ya registrado.');
+    require(
+      participantTicket[_participant] == 0,
+      'Participante ya registrado.'
+    );
     emit FailedRegistration(_participant, ticketId, reason);
-    
   }
 
   /**
@@ -285,12 +302,12 @@ contract HashPool {
     totalPrize = singleTicketPrice * uint256(contestantCounter);
   }
 
-  function getPoolStatus() public view returns (PoolState) {
+  function getPoolStatus() external view returns (PoolState) {
     return poolStatus;
   }
 
   function getPoolInfo()
-    public
+    external
     view
     returns (
       TicketType requiredTicketType,
@@ -309,11 +326,11 @@ contract HashPool {
     );
   }
 
-  function getMyTicketId(address _participant) public view returns (uint256) {
+  function getMyTicketId(address _participant) external view returns (uint256) {
     return participantTicket[_participant];
   }
 
-  function getContestantAddresses() public view returns (address[] memory) {
+  function getContestantAddresses() external view returns (address[] memory) {
     address[] memory participants = new address[](uint256(contestantCounter));
 
     for (uint i = 0; i < contestantCounter; i++) {
