@@ -76,7 +76,8 @@ contract HassPoolAdmin {
             _maxContestants,
             _requiredTicket,
             _findWinnerTime,
-            ticketManagerAddress
+            ticketManagerAddress,
+            msg.sender
         );
 
         newPoolAddress = address(newPool);
