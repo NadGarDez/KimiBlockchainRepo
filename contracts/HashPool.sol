@@ -359,7 +359,6 @@ contract HashPool {
       TicketType requiredTicketType,
       uint16 maxContestantsCount,
       uint16 currentContestants,
-      uint256 prizePool,
       uint256 winnerSelectionTime
     )
   {
@@ -367,7 +366,6 @@ contract HashPool {
       requiredTicket,
       poolMaxContestants[currentPoolId],
       poolContestantCounter[currentPoolId],
-      _calculatePrizePool(currentPoolId),
       findWinnerTime
     );
   }
