@@ -152,6 +152,7 @@ contract TicketManager {
   function setPlatformFee(uint256 newFee) public onlyOwner {
     require(newFee <= 1000, 'Fee no puede exceder el 10% (1000 BPS)');
     platformFeeBasisPoints = newFee;
+    emit FeeAdded(newFee);
   }
 
   function buy(string memory ticketName) public payable {
@@ -253,11 +254,11 @@ contract TicketManager {
   // 8. FUNCIONES DE VISTA (View)
   // =================================================================
 
-  function ticketsPerAddress() public view returns (uint256[] memory) {
-    return ticketOwners[msg.sender];
+  function ticketsPerAddress(address _owner) external view returns (uint256[] memory) {
+    return ticketOwners[_owner];
   }
 
-  function getAllTicketVariants() public view returns (Variant[] memory) {
+  function getAllTicketVariants() external view returns (Variant[] memory) {
     uint256 numTicketTypes = uint256(TicketType.Professional) + 1;
     Variant[] memory allVariants = new Variant[](numTicketTypes);
 
@@ -270,14 +271,22 @@ contract TicketManager {
 
   function getVariantDetails(
     TicketType _ticketType
-  ) public view returns (Variant memory) {
-    return variants[_ticketType];
+  ) external view returns (Variant memory) {
+    Variant memory result = variants[_ticketType];
+
+    // Si la variante no fue configurada, ticketPrice será 0. Revertir con mensaje claro.
+    require(
+      result.ticketPrice > 0,
+      'Variant::getVariantDetails: La variante de ticket no ha sido configurada.'
+    );
+
+    return result;
   }
 
   function getTicketDetails(
     uint256 _ticketId
   )
-    public
+    external
     view
     returns (
       address owner,

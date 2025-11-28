@@ -26,8 +26,8 @@ enum PoolState {
 library TicketManagerStructs {
   struct Variant {
     TicketType ticketType;
+    uint256 ticketPrice;
     string ticketName;
-    uint ticketPrice;
     string ticketColor;
   }
 }
@@ -56,7 +56,7 @@ interface ITicketManager {
 
   function ticketsPerAddress(
     address _owner
-  ) external view returns (uint[] memory);
+  ) external view returns (uint256[] memory);
 
   function getVariantDetails(
     TicketType _ticketType
@@ -79,6 +79,9 @@ contract HashPool {
 
   // Parámetros de la Ronda Actual (NO mapeados, se sobreecriben por ronda)
   TicketType public requiredTicket;
+  // 🔥 NUEVA VARIABLE DE ESTADO: Almacena el precio del ticket requerido del Pool
+  uint256 public requiredTicketPrice;
+
   uint256 startTime;
   uint256 findWinnerTime;
   uint public currentPoolId = 0; // ID de la ronda actual (0 = no hay ronda activa)
@@ -100,15 +103,38 @@ contract HashPool {
   // 4. EVENTOS
   // =================================================================
 
-  event PoolStatusChanged(uint indexed poolId, PoolState previousStatus, PoolState newStatus);
-  event TicketRefunded(uint indexed poolId, address indexed participant, uint256 ticketId);
-  event PreRegistrationEvent(uint indexed poolId, address indexed participant, uint256 ticketId);
-  event SuccessfulRegistration(uint indexed poolId, address indexed participant, uint256 ticketId);
+  event PoolStatusChanged(
+    uint indexed poolId,
+    PoolState previousStatus,
+    PoolState newStatus
+  );
+  event TicketRefunded(
+    uint indexed poolId,
+    address indexed participant,
+    uint256 ticketId
+  );
+  event PreRegistrationEvent(
+    uint indexed poolId,
+    address indexed participant,
+    uint256 ticketId
+  );
+  event SuccessfulRegistration(
+    uint indexed poolId,
+    address indexed participant,
+    uint256 ticketId
+  );
   event FailedRegistration(
     uint indexed poolId,
     address indexed participant,
     uint256 ticketId,
     string reason
+  );
+
+  event startinANewPool(
+    uint indexed poolId,
+    TicketType requiredTicket,
+    uint256 findWinnerTime,
+    address adminAddress
   );
 
   // =================================================================
@@ -124,19 +150,17 @@ contract HashPool {
     require(msg.sender == admin, 'Solo el administrador puede ejecutar.');
     _;
   }
-  
+
   modifier onlyActivePool() {
-      require(currentPoolId > 0, "No hay pool activo.");
-      _;
+    require(currentPoolId > 0, 'No hay pool activo.');
+    _;
   }
 
   // =================================================================
   // 6. CONSTRUCTOR
   // =================================================================
 
-  constructor(
-    address _ticketManagerAddress
-  ) {
+  constructor(address _ticketManagerAddress) {
     owner = msg.sender;
     ticketManager = ITicketManager(_ticketManagerAddress);
   }
@@ -145,7 +169,6 @@ contract HashPool {
   // 7. FUNCIONES MUTABLES (Lógica de Juego)
   // =================================================================
 
-
   function startNewPool(
     uint16 _maxContestants,
     TicketType _requiredTicket,
@@ -153,11 +176,19 @@ contract HashPool {
     address _adminAddress
   ) public onlyOwner {
     // Requerir que el pool anterior haya terminado antes de comenzar uno nuevo.
-    require(
-        currentPoolId == 0 || poolStatus[currentPoolId] == PoolState.GameEnded,
-        "Pool anterior aun no ha terminado (GameEnded)."
+
+    emit startinANewPool(
+      currentPoolId + 1,
+      _requiredTicket,
+      _findWinnerTime,
+      _adminAddress
     );
-    
+
+    require(
+      currentPoolId == 0 || poolStatus[currentPoolId] == PoolState.GameEnded,
+      'Pool anterior aun no ha terminado (GameEnded).'
+    );
+
     // Incrementar el ID para la NUEVA ronda
     currentPoolId++;
 
@@ -166,12 +197,21 @@ contract HashPool {
     requiredTicket = _requiredTicket;
     findWinnerTime = _findWinnerTime;
     startTime = block.timestamp;
-    admin = _adminAddress; // Permite al owner asignar un admin diferente
-    
+    admin = _adminAddress; 
+
+    TicketManagerStructs.Variant memory variant = ticketManager
+      .getVariantDetails(requiredTicket);
+
+    require(
+      variant.ticketType == _requiredTicket,
+      'Pool: Tipo de ticket requerido invalido.'
+    );
+
+    requiredTicketPrice = variant.ticketPrice;
+
     // El contador y el hash se inicializan a 0 por el nuevo ID.
     setPoolStatus(PoolState.RegistrationOpen);
   }
-  
 
   function setPoolStatus(PoolState newStatus) internal onlyActivePool {
     PoolState previousStatus = poolStatus[currentPoolId];
@@ -180,14 +220,24 @@ contract HashPool {
   }
 
   function PreRegistration(uint ticketId) public onlyActivePool {
-    require(poolStatus[currentPoolId] == PoolState.RegistrationOpen, 'Registro terminado');
-    require(poolPreRegistrationCounter[currentPoolId] < poolMaxContestants[currentPoolId], 'Cupo maximo alcanzado.');
+    require(
+      poolStatus[currentPoolId] == PoolState.RegistrationOpen,
+      'Registro terminado'
+    );
+    require(
+      poolPreRegistrationCounter[currentPoolId] <
+        poolMaxContestants[currentPoolId],
+      'Cupo maximo alcanzado.'
+    );
 
     poolPreRegistrationCounter[currentPoolId]++;
 
     emit PreRegistrationEvent(currentPoolId, msg.sender, ticketId);
 
-    if (poolPreRegistrationCounter[currentPoolId] == poolMaxContestants[currentPoolId]) {
+    if (
+      poolPreRegistrationCounter[currentPoolId] ==
+      poolMaxContestants[currentPoolId]
+    ) {
       setPoolStatus(PoolState.ValidatingEntries);
     }
   }
@@ -200,7 +250,10 @@ contract HashPool {
     uint256[] calldata _ticketIds,
     bytes32[] calldata _contestantSigns
   ) public onlyAdmin onlyActivePool {
-    require(poolStatus[currentPoolId] == PoolState.ValidatingEntries, 'Registro terminado');
+    require(
+      poolStatus[currentPoolId] == PoolState.ValidatingEntries,
+      'Registro terminado'
+    );
     require(_participants.length > 0, 'Batch vacio.');
     require(
       _participants.length == _ticketIds.length &&
@@ -227,7 +280,11 @@ contract HashPool {
         abi.encodePacked(currentCombinedHash, _contestantSigns[i])
       );
 
-      emit SuccessfulRegistration(currentPoolId, _participants[i], _ticketIds[i]);
+      emit SuccessfulRegistration(
+        currentPoolId,
+        _participants[i],
+        _ticketIds[i]
+      );
       currentCounter++;
     }
 
@@ -244,7 +301,7 @@ contract HashPool {
 
   function selectWinner() public onlyAdmin onlyActivePool {
     uint16 currentContestants = poolContestantCounter[currentPoolId];
-    
+
     require(
       poolStatus[currentPoolId] == PoolState.RegistrationClosed ||
         (block.timestamp >= findWinnerTime &&
@@ -265,7 +322,9 @@ contract HashPool {
 
     uint256 winningIndex = randomNumberSeed % uint256(currentContestants);
 
-    poolWinner[currentPoolId] = contestants[currentPoolId][uint16(winningIndex)];
+    poolWinner[currentPoolId] = contestants[currentPoolId][
+      uint16(winningIndex)
+    ];
 
     setPoolStatus(PoolState.AwardingPrizes);
   }
@@ -291,7 +350,10 @@ contract HashPool {
     uint ticketId,
     string calldata reason
   ) public onlyAdmin onlyActivePool {
-    require(poolStatus[currentPoolId] == PoolState.ValidatingEntries, 'Registro terminado');
+    require(
+      poolStatus[currentPoolId] == PoolState.ValidatingEntries,
+      'Registro terminado'
+    );
     require(
       participantTicket[currentPoolId][_participant] == 0,
       'Participante ya registrado.'
@@ -304,12 +366,21 @@ contract HashPool {
    * El participante debe especificar de qué ronda es su ticket.
    */
   function requestRefund(uint _poolId) public {
-    require(_poolId > 0 && _poolId < currentPoolId, 'ID de pool no valido o activo.');
-    
+    require(
+      _poolId > 0 && _poolId < currentPoolId,
+      'ID de pool no valido o activo.'
+    );
+
     // Se requiere que la ronda haya terminado
-    require(poolStatus[_poolId] == PoolState.GameEnded, 'El pool aun no termina.');
+    require(
+      poolStatus[_poolId] == PoolState.GameEnded,
+      'El pool aun no termina.'
+    );
     // Se requiere que NO haya habido ganador para esa ronda
-    require(poolWinner[_poolId] == address(0), 'El ganador ya fue seleccionado y premiado.');
+    require(
+      poolWinner[_poolId] == address(0),
+      'El ganador ya fue seleccionado y premiado.'
+    );
 
     uint256 ticketId = participantTicket[_poolId][msg.sender];
     require(ticketId != 0, 'No estas registrado en este pool.');
@@ -326,14 +397,19 @@ contract HashPool {
   // 8. FUNCIONES DE VISTA (View y Pure)
   // =================================================================
 
-  function _getRequiredTicketPrice() internal view returns (uint) {
+  // ❌ FUNCIÓN ELIMINADA: _getRequiredTicketPrice ya no es necesaria.
+  /* function _getRequiredTicketPrice() internal view returns (uint) {
     TicketManagerStructs.Variant memory variant = ticketManager
       .getVariantDetails(requiredTicket);
     return variant.ticketPrice;
-  }
+  } */
 
-  function _calculatePrizePool(uint _poolId) internal view returns (uint256 totalPrize) {
-    uint256 singleTicketPrice = _getRequiredTicketPrice();
+  function _calculatePrizePool(
+    uint _poolId
+  ) internal view returns (uint256 totalPrize) {
+    // 🔥 OPTIMIZACIÓN: Usamos la variable de estado almacenada
+    uint256 singleTicketPrice = requiredTicketPrice;
+
     // Usa el contador de la ronda específica para calcular el premio
     totalPrize = singleTicketPrice * uint256(poolContestantCounter[_poolId]);
   }
@@ -341,15 +417,14 @@ contract HashPool {
   function getCurrentPoolStatus() external view returns (PoolState) {
     return poolStatus[currentPoolId];
   }
-  
+
   function getPoolStatusById(uint _poolId) external view returns (PoolState) {
     return poolStatus[_poolId];
   }
-  
+
   function getPoolWinnerById(uint _poolId) external view returns (address) {
     return poolWinner[_poolId];
   }
-
 
   function getCurrentPoolInfo()
     external
@@ -357,6 +432,7 @@ contract HashPool {
     onlyActivePool
     returns (
       TicketType requiredTicketType,
+      uint256 requiredTicketValue, // 🔥 NUEVO: Valor del ticket
       uint16 maxContestantsCount,
       uint16 currentContestants,
       uint256 winnerSelectionTime
@@ -364,13 +440,16 @@ contract HashPool {
   {
     return (
       requiredTicket,
+      requiredTicketPrice, // 🔥 Devolvemos la variable de estado almacenada
       poolMaxContestants[currentPoolId],
       poolContestantCounter[currentPoolId],
       findWinnerTime
     );
   }
 
-  function getMyCurrentTicketId(address _participant) external view returns (uint256) {
+  function getMyCurrentTicketId(
+    address _participant
+  ) external view returns (uint256) {
     return participantTicket[currentPoolId][_participant];
   }
 
@@ -378,7 +457,11 @@ contract HashPool {
     return participantTicket[_poolId][msg.sender];
   }
 
-  function getCurrentContestantsAddress() external view returns (address[] memory) {
+  function getCurrentContestantsAddress()
+    external
+    view
+    returns (address[] memory)
+  {
     uint16 count = poolContestantCounter[currentPoolId];
     address[] memory participants = new address[](uint256(count));
 
@@ -389,7 +472,9 @@ contract HashPool {
     return participants;
   }
 
-  function getContestantAddressByPoolId(uint _poolId) external view returns (address[] memory) {
+  function getContestantAddressByPoolId(
+    uint _poolId
+  ) external view returns (address[] memory) {
     uint16 count = poolContestantCounter[_poolId];
     address[] memory participants = new address[](uint256(count));
 
