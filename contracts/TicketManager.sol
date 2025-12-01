@@ -254,7 +254,13 @@ contract TicketManager {
   // 8. FUNCIONES DE VISTA (View)
   // =================================================================
 
-  function ticketsPerAddress(address _owner) external view returns (uint256[] memory) {
+  function myTickets() external view returns (uint256[] memory) {
+    return ticketOwners[msg.sender];
+  }
+
+  // 2. Para consultar los tickets de cualquier otra dirección
+  function ticketsOf(address _owner) external view returns (uint256[] memory) {
+    require(_owner != address(0), 'Direccion no valida.');
     return ticketOwners[_owner];
   }
 
