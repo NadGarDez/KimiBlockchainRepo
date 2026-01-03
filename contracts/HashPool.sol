@@ -130,7 +130,8 @@ contract HashPool {
   event PreRegistrationEvent(
     uint indexed poolId,
     address indexed participant,
-    uint256 ticketId
+    uint256 ticketId,
+    bytes32 contestantSign
   );
   event SuccessfulRegistration(
     uint indexed poolId,
@@ -219,7 +220,7 @@ contract HashPool {
     emit PoolStatusChanged(currentPoolId, previousStatus, newStatus);
   }
 
-  function PreRegistration(uint ticketId) public onlyActivePool {
+  function PreRegistration(uint ticketId, bytes32 contestantSign) public onlyActivePool {
     require(
       poolStatus[currentPoolId] == PoolState.RegistrationOpen,
       'Registro terminado'
@@ -232,7 +233,7 @@ contract HashPool {
 
     poolPreRegistrationCounter[currentPoolId]++;
 
-    emit PreRegistrationEvent(currentPoolId, msg.sender, ticketId);
+    emit PreRegistrationEvent(currentPoolId, msg.sender, ticketId, contestantSign);
 
     if (
       poolPreRegistrationCounter[currentPoolId] ==
