@@ -66,7 +66,7 @@ interface ITicketManager {
       bool isUsed
     );
 
-  function markTicketAsUsed(uint256 _ticketId) external;
+  function markTicketsAsUsedBatch(uint256[] calldata _ticketIds) external;
 
   function unmarkTicketAsUsed(uint256 _ticketId) external;
 
@@ -287,6 +287,8 @@ contract HashPool {
       );
       currentCounter++;
     }
+
+    ticketManager.markTicketsAsUsedBatch(_ticketIds);
 
     poolCombinedHash[currentPoolId] = currentCombinedHash;
     poolContestantCounter[currentPoolId] = currentCounter;

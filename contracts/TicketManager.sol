@@ -212,25 +212,6 @@ contract TicketManager {
     emit PrizeAwarded(_winner, netPrize, feeAmount);
   }
 
-  function markTicketAsUsed(uint256 _ticketId) public onlyAuthorizedGames {
-    require(tickets[_ticketId].owner != address(0), 'Error: Ticket no existe.');
-    require(
-      !tickets[_ticketId].isUsed,
-      'Error: El ticket ya fue marcado como usado.'
-    );
-
-    Ticket memory t = tickets[_ticketId];
-    Variant memory v = variants[t.variant];
-
-    // Marcar como usado
-    tickets[_ticketId].isUsed = true;
-
-    // SEGURIDAD CRÍTICA: Incrementar el valor consumido (crédito) del juego que llama.
-    totalValueConsumed[msg.sender] += v.ticketPrice;
-
-    emit TicketConsumed(_ticketId, t.owner, msg.sender);
-  }
-
   function unmarkTicketAsUsed(uint256 _ticketId) public onlyAuthorizedGames {
     require(tickets[_ticketId].owner != address(0), 'Error: Ticket no existe.');
     require(
@@ -314,5 +295,28 @@ contract TicketManager {
       ticketVariant.ticketColor,
       requestedTicket.isUsed
     );
+  }
+
+  function markTicketsAsUsedBatch(
+    uint256[] calldata _ticketIds
+  ) external onlyAuthorizedGames {
+    uint256 batchTotalValue = 0;
+    uint256 length = _ticketIds.length;
+
+    for (uint256 i = 0; i < length; i++) {
+      uint256 tId = _ticketIds[i];
+
+      require(tickets[tId].owner != address(0), 'Error: Ticket no existe.');
+      require(!tickets[tId].isUsed, 'Error: El ticket ya fue usado.');
+
+      tickets[tId].isUsed = true;
+
+      Ticket storage t = tickets[tId];
+      batchTotalValue += variants[t.variant].ticketPrice;
+
+      emit TicketConsumed(tId, t.owner, msg.sender);
+    }
+
+    totalValueConsumed[msg.sender] += batchTotalValue;
   }
 }
