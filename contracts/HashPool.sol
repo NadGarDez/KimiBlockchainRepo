@@ -468,4 +468,31 @@ contract HashPool {
     
     return details;
   }
+
+
+  function resetCurrentPool() external onlyOwner onlyActivePool { // esta funcion se eliminara en produccion
+    require(
+      poolStatus[currentPoolId] == PoolState.RegistrationOpen,
+      'Solo se puede resetear si el registro esta abierto y no se han registrado batch.'
+    );
+    require(
+      poolContestantCounter[currentPoolId] == 0,
+      'No se puede resetear si ya hay registros confirmados.'
+    );
+
+    setPoolStatus(PoolState.GameEnded);
+
+    // Limpiar datos asociados al pool actual
+    delete poolCombinedHash[currentPoolId];
+    delete poolMaxContestants[currentPoolId];
+    delete poolContestantCounter[currentPoolId];
+    delete poolPreRegistrationCounter[currentPoolId];
+    delete poolRequiredTicket[currentPoolId];
+    delete poolRequiredTicketPrice[currentPoolId];
+    delete poolStartTime[currentPoolId];
+    delete poolFindWinnerTime[currentPoolId];
+
+    // Reset del identificador activo
+    // currentPoolId = 0;
+  }
 }

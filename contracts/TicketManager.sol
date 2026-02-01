@@ -305,18 +305,35 @@ contract TicketManager {
 
     for (uint256 i = 0; i < length; i++) {
       uint256 tId = _ticketIds[i];
-
-      require(tickets[tId].owner != address(0), 'Error: Ticket no existe.');
-      require(!tickets[tId].isUsed, 'Error: El ticket ya fue usado.');
-
-      tickets[tId].isUsed = true;
-
       Ticket storage t = tickets[tId];
-      batchTotalValue += variants[t.variant].ticketPrice;
 
-      emit TicketConsumed(tId, t.owner, msg.sender);
+      if (tickets[tId].owner != address(0) && !tickets[tId].isUsed) {
+        tickets[tId].isUsed = true;
+
+        batchTotalValue += variants[t.variant].ticketPrice;
+        emit TicketConsumed(tId, t.owner, msg.sender);
+      }
     }
 
     totalValueConsumed[msg.sender] += batchTotalValue;
+  }
+
+  function validTicketsBatch(
+    uint256[] calldata _ticketIds
+  ) external view returns (bool[] memory) {
+    uint256 length = _ticketIds.length;
+    bool[] memory results = new bool[](length);
+
+    for (uint256 i = 0; i < length; i++) {
+      uint256 tId = _ticketIds[i];
+
+      if (tickets[tId].owner != address(0) && !tickets[tId].isUsed) {
+        results[i] = true;
+      } else {
+        results[i] = false;
+      }
+    }
+
+    return results;
   }
 }
