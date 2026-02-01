@@ -299,41 +299,51 @@ contract TicketManager {
 
   function markTicketsAsUsedBatch(
     uint256[] calldata _ticketIds
-  ) external onlyAuthorizedGames {
+) external onlyAuthorizedGames returns (uint256[] memory validTicketIndex) {
     uint256 batchTotalValue = 0;
     uint256 length = _ticketIds.length;
+    uint256[] memory _validTicketIndex = new uint256[](length);
 
     for (uint256 i = 0; i < length; i++) {
-      uint256 tId = _ticketIds[i];
-      Ticket storage t = tickets[tId];
-
-      if (tickets[tId].owner != address(0) && !tickets[tId].isUsed) {
-        tickets[tId].isUsed = true;
-
-        batchTotalValue += variants[t.variant].ticketPrice;
-        emit TicketConsumed(tId, t.owner, msg.sender);
-      }
+        uint256 tId = _ticketIds[i];
+        Ticket storage t = tickets[tId]; // Una sola lectura
+        
+        // Verificación más eficiente
+        if (t.owner != address(0) && !t.isUsed) {
+            t.isUsed = true;
+            uint256 ticketPrice = variants[t.variant].ticketPrice;
+            batchTotalValue += ticketPrice;
+            
+            emit TicketConsumed(tId, t.owner, msg.sender); // Agregar precio
+            _validTicketIndex[i] = tId;
+        } else {
+            _validTicketIndex[i] = 0;
+        }
     }
 
-    totalValueConsumed[msg.sender] += batchTotalValue;
-  }
-
-  function validTicketsBatch(
-    uint256[] calldata _ticketIds
-  ) external view returns (bool[] memory) {
-    uint256 length = _ticketIds.length;
-    bool[] memory results = new bool[](length);
-
-    for (uint256 i = 0; i < length; i++) {
-      uint256 tId = _ticketIds[i];
-
-      if (tickets[tId].owner != address(0) && !tickets[tId].isUsed) {
-        results[i] = true;
-      } else {
-        results[i] = false;
-      }
+    if (batchTotalValue > 0) {
+        totalValueConsumed[msg.sender] += batchTotalValue;
     }
+    
+    return _validTicketIndex;
+}
 
-    return results;
-  }
+  // function validTicketsBatch(
+  //   uint256[] calldata _ticketIds
+  // ) external view returns (bool[] memory) {
+  //   uint256 length = _ticketIds.length;
+  //   bool[] memory results = new bool[](length);
+
+  //   for (uint256 i = 0; i < length; i++) {
+  //     uint256 tId = _ticketIds[i];
+
+  //     if (tickets[tId].owner != address(0) && !tickets[tId].isUsed) {
+  //       results[i] = true;
+  //     } else {
+  //       results[i] = false;
+  //     }
+  //   }
+
+  //   return results;
+  // }
 }
