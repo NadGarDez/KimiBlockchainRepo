@@ -71,9 +71,13 @@ contract TicketManager {
   );
   event PrizeAwarded(
     address indexed winner,
+    address indexed caller,
+    uint256 indexed gameId,
+    string gameName,
     uint256 netPrize,
     uint256 feeAmount
   );
+
   // ABSTRACCIÓN: Renombrado el evento de autorización.
   event GameAuthorized(address indexed contractGameAddress);
 
@@ -181,9 +185,18 @@ contract TicketManager {
     nextId++;
   }
 
+  /**
+   * @dev Función para otorgar premios, ahora incluye ID y nombre de la partida para mejorar el rastreo.
+   * @param _winner Dirección que recibe el premio neto.
+   * @param _totalPrizeAmount Monto total (antes de comisiones).
+   * @param _gameId ID único de la partida/sesión de juego.
+   * @param _gameName Nombre descriptivo del juego.
+   */
   function awardPrize(
     address payable _winner,
-    uint256 _totalPrizeAmount
+    uint256 _totalPrizeAmount,
+    uint256 _gameId,
+    string memory _gameName
   ) public onlyAuthorizedGames {
     require(_winner != address(0), 'Direccion del ganador invalida.');
     require(
@@ -200,16 +213,28 @@ contract TicketManager {
     // Descontar el premio pagado del saldo de valor consumido del juego.
     totalValueConsumed[msg.sender] -= _totalPrizeAmount;
 
+    // Cálculo de comisiones
     uint256 feeAmount = (_totalPrizeAmount * platformFeeBasisPoints) / 10000;
     uint256 netPrize = _totalPrizeAmount - feeAmount;
 
+    // Pago de comisión al owner
     (bool feeSuccess, ) = payable(contractOwner).call{value: feeAmount}('');
     require(feeSuccess, 'Error al enviar la comision (fee) al owner.');
 
+    // Pago del premio neto al ganador
     (bool prizeSuccess, ) = _winner.call{value: netPrize}('');
     require(prizeSuccess, 'Error al enviar el premio neto al ganador.');
 
-    emit PrizeAwarded(_winner, netPrize, feeAmount);
+    // EMISIÓN DEL EVENTO ACTUALIZADO
+    // msg.sender será la dirección del contrato de juego que llamó a esta función
+    emit PrizeAwarded(
+      _winner,
+      msg.sender,
+      _gameId,
+      _gameName,
+      netPrize,
+      feeAmount
+    );
   }
 
   function unmarkTicketAsUsed(uint256 _ticketId) public onlyAuthorizedGames {
@@ -299,34 +324,34 @@ contract TicketManager {
 
   function markTicketsAsUsedBatch(
     uint256[] calldata _ticketIds
-) external onlyAuthorizedGames returns (uint256[] memory validTicketIndex) {
+  ) external onlyAuthorizedGames returns (uint256[] memory validTicketIndex) {
     uint256 batchTotalValue = 0;
     uint256 length = _ticketIds.length;
     uint256[] memory _validTicketIndex = new uint256[](length);
 
     for (uint256 i = 0; i < length; i++) {
-        uint256 tId = _ticketIds[i];
-        Ticket storage t = tickets[tId]; // Una sola lectura
-        
-        // Verificación más eficiente
-        if (t.owner != address(0) && !t.isUsed) {
-            t.isUsed = true;
-            uint256 ticketPrice = variants[t.variant].ticketPrice;
-            batchTotalValue += ticketPrice;
-            
-            emit TicketConsumed(tId, t.owner, msg.sender); // Agregar precio
-            _validTicketIndex[i] = tId;
-        } else {
-            _validTicketIndex[i] = 0;
-        }
+      uint256 tId = _ticketIds[i];
+      Ticket storage t = tickets[tId]; // Una sola lectura
+
+      // Verificación más eficiente
+      if (t.owner != address(0) && !t.isUsed) {
+        t.isUsed = true;
+        uint256 ticketPrice = variants[t.variant].ticketPrice;
+        batchTotalValue += ticketPrice;
+
+        emit TicketConsumed(tId, t.owner, msg.sender); // Agregar precio
+        _validTicketIndex[i] = tId;
+      } else {
+        _validTicketIndex[i] = 0;
+      }
     }
 
     if (batchTotalValue > 0) {
-        totalValueConsumed[msg.sender] += batchTotalValue;
+      totalValueConsumed[msg.sender] += batchTotalValue;
     }
-    
+
     return _validTicketIndex;
-}
+  }
 
   // function validTicketsBatch(
   //   uint256[] calldata _ticketIds

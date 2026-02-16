@@ -66,13 +66,24 @@ interface ITicketManager {
       bool isUsed
     );
 
-  function markTicketsAsUsedBatch(uint256[] calldata _ticketIds) external returns (uint256[] memory validTicketsIndex);
+  function markTicketsAsUsedBatch(
+    uint256[] calldata _ticketIds
+  ) external returns (uint256[] memory validTicketsIndex);
 
   function unmarkTicketAsUsed(uint256 _ticketId) external;
 
+  /**
+   * @dev Prototipo actualizado para la interfaz (interface) o contrato padre.
+   * @param _winner Dirección que recibe el premio neto.
+   * @param _totalPrizeAmount Monto total (antes de comisiones).
+   * @param _gameId ID único de la partida/sesión de juego.
+   * @param _gameName Nombre descriptivo del juego.
+   */
   function awardPrize(
     address payable _winner,
-    uint256 _totalPrizeAmount
+    uint256 _totalPrizeAmount,
+    uint256 _gameId,
+    string calldata _gameName
   ) external;
 
   function ticketsPerAddress(
@@ -94,8 +105,8 @@ contract HashPool {
   // =================================================================
 
   ITicketManager public ticketManager;
-  address public owner; 
-  uint public currentPoolId = 0; 
+  address public owner;
+  uint public currentPoolId = 0;
 
   mapping(uint => address) public poolWinner;
   mapping(uint => PoolState) public poolStatus;
@@ -183,11 +194,7 @@ contract HashPool {
     TicketType _requiredTicket,
     uint256 _findWinnerTime
   ) public onlyOwner {
-    emit startinANewPool(
-      currentPoolId + 1,
-      _requiredTicket,
-      _findWinnerTime
-    );
+    emit startinANewPool(currentPoolId + 1, _requiredTicket, _findWinnerTime);
 
     require(
       currentPoolId == 0 || poolStatus[currentPoolId] == PoolState.GameEnded,
@@ -220,7 +227,10 @@ contract HashPool {
     emit PoolStatusChanged(currentPoolId, previousStatus, newStatus);
   }
 
-  function PreRegistration(uint ticketId, bytes32 contestantSign) public onlyActivePool {
+  function PreRegistration(
+    uint ticketId,
+    bytes32 contestantSign
+  ) public onlyActivePool {
     require(
       poolStatus[currentPoolId] == PoolState.RegistrationOpen,
       'Registro terminado'
@@ -233,7 +243,12 @@ contract HashPool {
 
     poolPreRegistrationCounter[currentPoolId]++;
 
-    emit PreRegistrationEvent(currentPoolId, msg.sender, ticketId, contestantSign);
+    emit PreRegistrationEvent(
+      currentPoolId,
+      msg.sender,
+      ticketId,
+      contestantSign
+    );
 
     if (
       poolPreRegistrationCounter[currentPoolId] ==
@@ -250,75 +265,78 @@ contract HashPool {
     address[] calldata _participants,
     uint256[] calldata _ticketIds,
     bytes32[] calldata _contestantSigns
-) public onlyOwner onlyActivePool {
+  ) public onlyOwner onlyActivePool {
     require(
-        poolStatus[currentPoolId] == PoolState.ValidatingEntries,
-        'Registro terminado'
+      poolStatus[currentPoolId] == PoolState.ValidatingEntries,
+      'Registro terminado'
     );
     require(_participants.length > 0, 'Batch vacio.');
     require(
-        _participants.length == _ticketIds.length &&
+      _participants.length == _ticketIds.length &&
         _ticketIds.length == _contestantSigns.length,
-        'Arrays deben tener la misma longitud.'
+      'Arrays deben tener la misma longitud.'
     );
 
     uint256 batchSize = _participants.length;
     uint256 currentCounter = poolContestantCounter[currentPoolId]; // Cambiar a uint256
-    
+
     require(
-        currentCounter + batchSize <= poolMaxContestants[currentPoolId],
-        'El batch excede el cupo maximo.'
+      currentCounter + batchSize <= poolMaxContestants[currentPoolId],
+      'El batch excede el cupo maximo.'
     );
 
     bytes32 currentCombinedHash = poolCombinedHash[currentPoolId];
-    
+
     // LLAMAR ANTES DE MODIFICAR ESTADO PROPIO
-    uint256[] memory validTicketIndex = ticketManager.markTicketsAsUsedBatch(_ticketIds);
+    uint256[] memory validTicketIndex = ticketManager.markTicketsAsUsedBatch(
+      _ticketIds
+    );
 
     uint256 successfulRegistrations = 0;
-    
-    for (uint256 i = 0; i < batchSize; i++) { // Cambiar a uint256
-        if (validTicketIndex[i] == 0) {
-            emit FailedRegistration(
-                currentPoolId,
-                _participants[i],
-                _ticketIds[i],
-                'Ticket invalido o ya usado.'
-            );
-            continue;
-        }
-        
-        contestants[currentPoolId][uint16(currentCounter)] = _participants[i];
-        participantTicket[currentPoolId][_participants[i]] = _ticketIds[i];
-        // ¿Realmente necesitas almacenar esto? Si solo es para el hash, elimínalo
-        // contestantSigns[currentPoolId][_participants[i]] = _contestantSigns[i];
-        
-        currentCombinedHash = keccak256(
-            abi.encodePacked(currentCombinedHash, _contestantSigns[i])
-        );
 
-        emit SuccessfulRegistration(
-            currentPoolId,
-            _participants[i],
-            _ticketIds[i]
+    for (uint256 i = 0; i < batchSize; i++) {
+      // Cambiar a uint256
+      if (validTicketIndex[i] == 0) {
+        emit FailedRegistration(
+          currentPoolId,
+          _participants[i],
+          _ticketIds[i],
+          'Ticket invalido o ya usado.'
         );
-        currentCounter++;
-        successfulRegistrations++;
+        continue;
+      }
+
+      contestants[currentPoolId][uint16(currentCounter)] = _participants[i];
+      participantTicket[currentPoolId][_participants[i]] = _ticketIds[i];
+      // ¿Realmente necesitas almacenar esto? Si solo es para el hash, elimínalo
+      // contestantSigns[currentPoolId][_participants[i]] = _contestantSigns[i];
+
+      currentCombinedHash = keccak256(
+        abi.encodePacked(currentCombinedHash, _contestantSigns[i])
+      );
+
+      emit SuccessfulRegistration(
+        currentPoolId,
+        _participants[i],
+        _ticketIds[i]
+      );
+      currentCounter++;
+      successfulRegistrations++;
     }
 
     // Solo actualizar si hubo registros exitosos
     if (successfulRegistrations > 0) {
-        poolCombinedHash[currentPoolId] = currentCombinedHash;
-        poolContestantCounter[currentPoolId] = uint16(currentCounter);
+      poolCombinedHash[currentPoolId] = currentCombinedHash;
+      poolContestantCounter[currentPoolId] = uint16(currentCounter);
 
-        if (currentCounter >= poolMaxContestants[currentPoolId]) {
-            setPoolStatus(PoolState.RegistrationClosed);
-        } else {
-            poolPreRegistrationCounter[currentPoolId] = uint16(currentCounter);
-            setPoolStatus(PoolState.RegistrationOpen);
-        }
+      if (currentCounter >= poolMaxContestants[currentPoolId]) {
+        setPoolStatus(PoolState.RegistrationClosed);
+      } else {
+        poolPreRegistrationCounter[currentPoolId] = uint16(currentCounter);
+        setPoolStatus(PoolState.RegistrationOpen);
+      }
     }
-}
+  }
 
   function selectWinner() public onlyOwner onlyActivePool {
     uint16 currentContestants = poolContestantCounter[currentPoolId];
@@ -361,7 +379,7 @@ contract HashPool {
 
     uint256 totalPrize = _calculatePrizePool(currentPoolId);
 
-    ticketManager.awardPrize(winnerAddress, totalPrize);
+    ticketManager.awardPrize(winnerAddress, totalPrize, currentPoolId, 'HashPool');
 
     setPoolStatus(PoolState.GameEnded);
   }
@@ -439,42 +457,42 @@ contract HashPool {
   function getPoolDetails(
     uint _poolId,
     address _participant
-  )
-    external
-    view
-    returns (PoolDetails memory details)
-  {
+  ) external view returns (PoolDetails memory details) {
     uint poolToQuery = _poolId;
 
     if (poolToQuery == 0) {
       poolToQuery = currentPoolId;
     }
-    
-    require(poolToQuery > 0 && poolToQuery <= currentPoolId, 'Pool ID no valido o no activo.');
+
+    require(
+      poolToQuery > 0 && poolToQuery <= currentPoolId,
+      'Pool ID no valido o no activo.'
+    );
 
     // Lecturas minimas necesarias
     TicketType _requiredTicketType = poolRequiredTicket[poolToQuery];
     uint16 _currentContestants = poolContestantCounter[poolToQuery];
-    
+
     // Ejecutar la lógica pesada del array en una sub-función (libera la pila)
     address[] memory _confirmedContestants = _getConfirmedContestants(
       poolToQuery,
       _currentContestants
     );
-    
+
     // Obtener los detalles del ticket (esto también crea variables locales)
-    TicketManagerStructs.Variant memory variant = ticketManager.getVariantDetails(_requiredTicketType);
-    
+    TicketManagerStructs.Variant memory variant = ticketManager
+      .getVariantDetails(_requiredTicketType);
+
     // ASIGNACIÓN FINAL AL STRUCT ÚNICO (usando lecturas directas del mapeo)
     details = PoolDetails({
-      poolId: poolToQuery, 
+      poolId: poolToQuery,
       currentStatus: poolStatus[poolToQuery],
       poolManagerAddress: owner,
       startTimeStamp: poolStartTime[poolToQuery],
       winnerSelectionTime: poolFindWinnerTime[poolToQuery],
       requiredTicketType: _requiredTicketType,
       requiredTicketValue: poolRequiredTicketPrice[poolToQuery],
-      ticketName: variant.ticketName, 
+      ticketName: variant.ticketName,
       ticketColor: variant.ticketColor,
       maxContestantsCount: poolMaxContestants[poolToQuery],
       currentContestants: _currentContestants,
@@ -484,21 +502,12 @@ contract HashPool {
       totalPrizePool: _calculatePrizePool(poolToQuery),
       confirmedContestants: _confirmedContestants
     });
-    
+
     return details;
   }
 
-
-  function resetCurrentPool() external onlyOwner onlyActivePool { // esta funcion se eliminara en produccion
-    require(
-      poolStatus[currentPoolId] == PoolState.RegistrationOpen,
-      'Solo se puede resetear si el registro esta abierto y no se han registrado batch.'
-    );
-    require(
-      poolContestantCounter[currentPoolId] == 0,
-      'No se puede resetear si ya hay registros confirmados.'
-    );
-
+  function resetCurrentPool() external onlyOwner onlyActivePool {
+    // esta funcion se eliminara en produccion
     setPoolStatus(PoolState.GameEnded);
 
     // Limpiar datos asociados al pool actual
