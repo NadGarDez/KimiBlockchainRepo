@@ -111,6 +111,8 @@ contract HashPool {
   mapping(uint => address) public poolWinner;
   mapping(uint => PoolState) public poolStatus;
   mapping(uint => bytes32) public poolCombinedHash;
+  mapping(uint => bytes32) public poolRollingHash;
+  mapping(uint => bytes32) public poolXorHash;
   mapping(uint => uint16) public poolMaxContestants;
   mapping(uint => uint16) public poolContestantCounter;
   mapping(uint => uint16) public poolPreRegistrationCounter;
@@ -122,7 +124,6 @@ contract HashPool {
 
   mapping(uint => mapping(uint16 => address)) public contestants;
   mapping(uint => mapping(address => uint256)) public participantTicket;
-  mapping(uint => mapping(address => bytes32)) public contestantSigns;
 
   // =================================================================
   // 4. EVENTOS
@@ -258,85 +259,94 @@ contract HashPool {
     }
   }
 
-  /**
-   * @notice Registra un lote de participantes, sus tickets y sus firmas de entropía.
-   */
-  function registerBatch(
+function registerBatch(
     address[] calldata _participants,
     uint256[] calldata _ticketIds,
     bytes32[] calldata _contestantSigns
-  ) public onlyOwner onlyActivePool {
+) public onlyOwner onlyActivePool {
     require(
-      poolStatus[currentPoolId] == PoolState.ValidatingEntries,
-      'Registro terminado'
+        poolStatus[currentPoolId] == PoolState.ValidatingEntries,
+        'Registro terminado'
     );
     require(_participants.length > 0, 'Batch vacio.');
     require(
-      _participants.length == _ticketIds.length &&
+        _participants.length == _ticketIds.length &&
         _ticketIds.length == _contestantSigns.length,
-      'Arrays deben tener la misma longitud.'
+        'Arrays deben tener la misma longitud.'
     );
 
     uint256 batchSize = _participants.length;
-    uint256 currentCounter = poolContestantCounter[currentPoolId]; // Cambiar a uint256
+    uint256 currentCounter = poolContestantCounter[currentPoolId];
 
     require(
-      currentCounter + batchSize <= poolMaxContestants[currentPoolId],
-      'El batch excede el cupo maximo.'
+        currentCounter + batchSize <= poolMaxContestants[currentPoolId],
+        'El batch excede el cupo maximo.'
     );
 
-    bytes32 currentCombinedHash = poolCombinedHash[currentPoolId];
+    bytes32 currentRollingHash = poolRollingHash[currentPoolId];
+    bytes32 currentCombinedXOR = poolXorHash[currentPoolId];
 
-    // LLAMAR ANTES DE MODIFICAR ESTADO PROPIO
+    if (currentCounter == 0) {
+      currentRollingHash = bytes32(0);
+        currentCombinedXOR = bytes32(0);
+    }
+
     uint256[] memory validTicketIndex = ticketManager.markTicketsAsUsedBatch(
-      _ticketIds
+        _ticketIds
     );
 
     uint256 successfulRegistrations = 0;
 
     for (uint256 i = 0; i < batchSize; i++) {
-      // Cambiar a uint256
-      if (validTicketIndex[i] == 0) {
-        emit FailedRegistration(
-          currentPoolId,
-          _participants[i],
-          _ticketIds[i],
-          'Ticket invalido o ya usado.'
+        if (validTicketIndex[i] == 0) {
+            emit FailedRegistration(
+                currentPoolId,
+                _participants[i],
+                _ticketIds[i],
+                'Ticket invalido o ya usado.'
+            );
+            continue;
+        }
+
+        contestants[currentPoolId][uint16(currentCounter)] = _participants[i];
+        participantTicket[currentPoolId][_participants[i]] = _ticketIds[i];
+        
+        currentRollingHash = keccak256(
+          abi.encodePacked(
+            currentRollingHash,
+            _contestantSigns[i],
+            _participants[i],
+            _ticketIds[i],
+            currentCounter,
+            currentPoolId
+          )
         );
-        continue;
-      }
 
-      contestants[currentPoolId][uint16(currentCounter)] = _participants[i];
-      participantTicket[currentPoolId][_participants[i]] = _ticketIds[i];
-      // ¿Realmente necesitas almacenar esto? Si solo es para el hash, elimínalo
-      // contestantSigns[currentPoolId][_participants[i]] = _contestantSigns[i];
+        currentCombinedXOR = currentCombinedXOR ^ _contestantSigns[i];
 
-      currentCombinedHash = keccak256(
-        abi.encodePacked(currentCombinedHash, _contestantSigns[i])
-      );
-
-      emit SuccessfulRegistration(
-        currentPoolId,
-        _participants[i],
-        _ticketIds[i]
-      );
-      currentCounter++;
-      successfulRegistrations++;
+        emit SuccessfulRegistration(
+            currentPoolId,
+            _participants[i],
+            _ticketIds[i]
+        );
+        currentCounter++;
+        successfulRegistrations++;
     }
 
-    // Solo actualizar si hubo registros exitosos
     if (successfulRegistrations > 0) {
-      poolCombinedHash[currentPoolId] = currentCombinedHash;
-      poolContestantCounter[currentPoolId] = uint16(currentCounter);
+      poolRollingHash[currentPoolId] = currentRollingHash;
+      poolXorHash[currentPoolId] = currentCombinedXOR;
+      poolCombinedHash[currentPoolId] = currentRollingHash;
+        poolContestantCounter[currentPoolId] = uint16(currentCounter);
 
-      if (currentCounter >= poolMaxContestants[currentPoolId]) {
-        setPoolStatus(PoolState.RegistrationClosed);
-      } else {
-        poolPreRegistrationCounter[currentPoolId] = uint16(currentCounter);
-        setPoolStatus(PoolState.RegistrationOpen);
-      }
+        if (currentCounter >= poolMaxContestants[currentPoolId]) {
+            setPoolStatus(PoolState.RegistrationClosed);
+        } else {
+            poolPreRegistrationCounter[currentPoolId] = uint16(currentCounter);
+            setPoolStatus(PoolState.RegistrationOpen);
+        }
     }
-  }
+}
 
   function selectWinner() public onlyOwner onlyActivePool {
     uint16 currentContestants = poolContestantCounter[currentPoolId];
@@ -357,7 +367,20 @@ contract HashPool {
       setPoolStatus(PoolState.RegistrationClosed);
     }
 
-    uint256 randomNumberSeed = uint256(poolCombinedHash[currentPoolId]);
+    bytes32 finalEntropy = keccak256(
+      abi.encodePacked(
+        poolRollingHash[currentPoolId],
+        poolXorHash[currentPoolId],
+        blockhash(block.number - 1),
+        block.prevrandao,
+        block.timestamp,
+        currentContestants,
+        address(this),
+        currentPoolId
+      )
+    );
+
+    uint256 randomNumberSeed = uint256(finalEntropy);
 
     uint256 winningIndex = randomNumberSeed % uint256(currentContestants);
 
@@ -512,6 +535,8 @@ contract HashPool {
 
     // Limpiar datos asociados al pool actual
     delete poolCombinedHash[currentPoolId];
+    delete poolRollingHash[currentPoolId];
+    delete poolXorHash[currentPoolId];
     delete poolMaxContestants[currentPoolId];
     delete poolContestantCounter[currentPoolId];
     delete poolPreRegistrationCounter[currentPoolId];
